@@ -1,8 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.anmka.mrmahmoudrabie">
+    package="com.spring.series">
     <uses-permission android:name="android.permission.INTERNET"/>
     <application
-        android:label="mr_mahmoud_rabie"
+        android:label="Spring Series"
         android:name="${applicationName}"
         android:icon="@mipmap/launcher_icon">
         <activity

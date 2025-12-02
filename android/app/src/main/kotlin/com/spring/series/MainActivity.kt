@@ -1,4 +1,4 @@
-package com.anmka.mrmahmoudrabie
+package com.spring.series
 
 import io.flutter.embedding.android.FlutterActivity
 
