@@ -1,6 +1,12 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_android/webview_flutter_android.dart';
 import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
+import 'package:dio/dio.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:path/path.dart' as path;
 
 void main() {
   runApp(const MrMahmoudRabieApp());
@@ -46,20 +52,31 @@ class _WebViewScreenState extends State<WebViewScreen> {
 
   void _initializeWebView() {
     late final PlatformWebViewControllerCreationParams params;
-    
+
     if (WebViewPlatform.instance is WebKitWebViewPlatform) {
       params = WebKitWebViewControllerCreationParams(
         allowsInlineMediaPlayback: true,
+        mediaTypesRequiringUserAction: const <PlaybackMediaTypes>{},
       );
+    } else if (WebViewPlatform.instance is AndroidWebViewPlatform) {
+      params = AndroidWebViewControllerCreationParams();
     } else {
       params = const PlatformWebViewControllerCreationParams();
     }
 
-    final WebViewController controller = WebViewController.fromPlatformCreationParams(params);
+    final WebViewController controller =
+        WebViewController.fromPlatformCreationParams(params);
+
+    // Configure Android WebView settings for YouTube video playback
+    if (controller.platform is AndroidWebViewController) {
+      (controller.platform as AndroidWebViewController)
+          .setMediaPlaybackRequiresUserGesture(false);
+    }
 
     controller
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(Colors.transparent)
+      ..enableZoom(true)
       ..setNavigationDelegate(
         NavigationDelegate(
           onProgress: (int progress) {
@@ -85,7 +102,7 @@ class _WebViewScreenState extends State<WebViewScreen> {
           onWebResourceError: (WebResourceError error) {
             // Only show error if the page hasn't loaded successfully
             // Filter out common non-critical errors that don't affect the main page
-            if (!_hasLoadedSuccessfully && 
+            if (!_hasLoadedSuccessfully &&
                 !error.description.contains('ERR_NAME_NOT_RESOLVED') &&
                 !error.description.contains('ERR_CONNECTION_REFUSED') &&
                 !error.description.contains('ERR_INTERNET_DISCONNECTED')) {
@@ -96,7 +113,21 @@ class _WebViewScreenState extends State<WebViewScreen> {
             }
             debugPrint('WebView Error: ${error.description}');
           },
-          onNavigationRequest: (NavigationRequest request) {
+          onNavigationRequest: (NavigationRequest request) async {
+            final url = request.url;
+            debugPrint('🧭 Navigation request: $url');
+
+            // Check if URL is a PDF file
+            if (url.toLowerCase().endsWith('.pdf') ||
+                url.toLowerCase().contains('.pdf?') ||
+                url.toLowerCase().contains('.pdf#')) {
+              debugPrint('📄 PDF detected, starting download: $url');
+              if (mounted) {
+                await _downloadPdf(context, url);
+              }
+              return NavigationDecision.prevent;
+            }
+
             return NavigationDecision.navigate;
           },
         ),
@@ -116,6 +147,346 @@ class _WebViewScreenState extends State<WebViewScreen> {
     _controller.reload();
   }
 
+  /// Request storage permission with dialog
+  Future<bool> _requestStoragePermission(BuildContext context) async {
+    if (!Platform.isAndroid) {
+      // iOS doesn't need explicit storage permission for app documents
+      return true;
+    }
+
+    // Check if permission is already granted
+    var storageStatus = await Permission.storage.status;
+    if (storageStatus.isGranted) {
+      debugPrint('✅ Storage permission already granted');
+      return true;
+    }
+
+    // Check manage external storage for Android 11+
+    var manageStorageStatus = await Permission.manageExternalStorage.status;
+    if (manageStorageStatus.isGranted) {
+      debugPrint('✅ Manage external storage permission already granted');
+      return true;
+    }
+
+    // Check if permission is permanently denied
+    final isPermanentlyDenied = storageStatus.isPermanentlyDenied ||
+        manageStorageStatus.isPermanentlyDenied;
+
+    // Show dialog asking for permission
+    final shouldRequest = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.folder, color: Colors.blue),
+              SizedBox(width: 8),
+              Text('صلاحية التخزين'),
+            ],
+          ),
+          content: Text(
+            isPermanentlyDenied
+                ? 'تم رفض صلاحية التخزين مسبقاً. يجب السماح بها من إعدادات التطبيق.\n\nهل تريد فتح الإعدادات الآن؟'
+                : 'يحتاج التطبيق إلى صلاحية الوصول إلى التخزين لتحميل الملفات.\n\nهل تريد السماح بالوصول إلى التخزين؟',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop(false);
+              },
+              child: const Text('إلغاء'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop(true);
+              },
+              child: Text(isPermanentlyDenied ? 'فتح الإعدادات' : 'موافق'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (shouldRequest != true) {
+      return false;
+    }
+
+    // If permanently denied, open app settings
+    if (isPermanentlyDenied) {
+      final opened = await openAppSettings();
+      if (!opened) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('لا يمكن فتح الإعدادات'),
+              backgroundColor: Colors.orange,
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+      return false;
+    }
+
+    // Request storage permission first
+    debugPrint('📝 Requesting storage permission...');
+    storageStatus = await Permission.storage.request();
+    debugPrint('📝 Storage permission status: ${storageStatus.name}');
+
+    // Wait a bit and check again (sometimes there's a delay)
+    if (!storageStatus.isGranted) {
+      await Future.delayed(const Duration(milliseconds: 500));
+      storageStatus = await Permission.storage.status;
+      debugPrint(
+        '📝 Storage permission status after delay: ${storageStatus.name}',
+      );
+    }
+
+    if (storageStatus.isGranted) {
+      debugPrint('✅ Storage permission granted');
+      return true;
+    }
+
+    // Try manage external storage for Android 11+ (API 30+)
+    debugPrint('📝 Requesting manage external storage permission...');
+    manageStorageStatus = await Permission.manageExternalStorage.request();
+    debugPrint(
+      '📝 Manage external storage status: ${manageStorageStatus.name}',
+    );
+
+    // Wait a bit and check again
+    if (!manageStorageStatus.isGranted) {
+      await Future.delayed(const Duration(milliseconds: 500));
+      manageStorageStatus = await Permission.manageExternalStorage.status;
+      debugPrint(
+        '📝 Manage external storage status after delay: ${manageStorageStatus.name}',
+      );
+    }
+
+    if (manageStorageStatus.isGranted) {
+      debugPrint('✅ Manage external storage permission granted');
+      return true;
+    }
+
+    // Check if permanently denied after request
+    if (storageStatus.isPermanentlyDenied ||
+        manageStorageStatus.isPermanentlyDenied) {
+      if (mounted) {
+        final openSettings = await showDialog<bool>(
+          context: context,
+          builder: (BuildContext context) {
+            return AlertDialog(
+              title: const Text('صلاحية مرفوضة'),
+              content: const Text(
+                'تم رفض الصلاحية. يجب السماح بها من إعدادات التطبيق.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('إلغاء'),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: const Text('فتح الإعدادات'),
+                ),
+              ],
+            );
+          },
+        );
+
+        if (openSettings == true) {
+          await openAppSettings();
+        }
+      }
+      return false;
+    }
+
+    // If still not granted, but not permanently denied, try to continue anyway
+    // (Android 10+ allows app-specific directories without permission)
+    debugPrint('⚠️ Permission not granted, but trying to continue...');
+    return true; // Try anyway - might work with app-specific directory
+  }
+
+  /// Download PDF file from URL
+  Future<void> _downloadPdf(BuildContext context, String url) async {
+    if (!mounted) return;
+
+    try {
+      // Request storage permission first with dialog
+      final hasPermission = await _requestStoragePermission(context);
+      if (!hasPermission) {
+        return;
+      }
+
+      // Show download started message after permission granted
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Row(
+              children: [
+                SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                SizedBox(width: 16),
+                Text('بدأ التحميل...'),
+              ],
+            ),
+            duration: Duration(seconds: 30),
+          ),
+        );
+      }
+
+      // Get download directory - always use public Downloads folder
+      Directory? downloadDir;
+      if (Platform.isAndroid) {
+        try {
+          // Get external storage directory to extract root path
+          final externalStorage = await getExternalStorageDirectory();
+          if (externalStorage != null) {
+            // Extract root path (everything before /Android/data)
+            // Example: /storage/emulated/0/Android/data/com.spring.series/files
+            // Result: /storage/emulated/0
+            final rootPath = externalStorage.path.split('/Android')[0];
+            downloadDir = Directory('$rootPath/Download');
+            debugPrint('📁 Using Downloads directory: ${downloadDir.path}');
+
+            // Ensure directory exists
+            if (!await downloadDir.exists()) {
+              await downloadDir.create(recursive: true);
+            }
+
+            // Test write access
+            try {
+              final testFile = File('${downloadDir.path}/.test');
+              await testFile.writeAsString('test');
+              await testFile.delete();
+              debugPrint('✅ Can write to Downloads directory');
+            } catch (e) {
+              debugPrint('⚠️ Cannot write to Downloads: $e');
+              // Try alternative path
+              downloadDir = Directory('/storage/emulated/0/Download');
+              if (!await downloadDir.exists()) {
+                await downloadDir.create(recursive: true);
+              }
+              debugPrint('📁 Trying alternative path: ${downloadDir.path}');
+            }
+          } else {
+            throw Exception('لا يمكن الوصول إلى التخزين الخارجي');
+          }
+        } catch (e) {
+          debugPrint('⚠️ Error getting Downloads directory: $e');
+          // Last resort: try direct path
+          try {
+            downloadDir = Directory('/storage/emulated/0/Download');
+            if (!await downloadDir.exists()) {
+              await downloadDir.create(recursive: true);
+            }
+            debugPrint('📁 Using direct Downloads path: ${downloadDir.path}');
+          } catch (e2) {
+            debugPrint('❌ All methods failed: $e2');
+            throw Exception('لا يمكن الوصول إلى مجلد التنزيلات');
+          }
+        }
+      } else if (Platform.isIOS) {
+        downloadDir = await getApplicationDocumentsDirectory();
+      } else {
+        // For other platforms, use application documents directory
+        final appDir = await getApplicationDocumentsDirectory();
+        downloadDir = Directory('${appDir.path}/Download');
+        if (!await downloadDir.exists()) {
+          await downloadDir.create(recursive: true);
+        }
+      }
+
+      // Extract filename from URL
+      final uri = Uri.parse(url);
+      String fileName = path.basename(uri.path);
+      if (fileName.isEmpty || !fileName.toLowerCase().endsWith('.pdf')) {
+        // Generate filename if not found
+        fileName = 'document_${DateTime.now().millisecondsSinceEpoch}.pdf';
+      }
+
+      // Decode URL-encoded filename
+      try {
+        fileName = Uri.decodeComponent(fileName);
+      } catch (e) {
+        debugPrint('⚠️ Could not decode filename: $e');
+      }
+
+      final filePath = path.join(downloadDir.path, fileName);
+
+      // Download file using dio
+      final dio = Dio();
+      await dio.download(
+        url,
+        filePath,
+        onReceiveProgress: (received, total) {
+          if (total != -1) {
+            final progress = (received / total * 100).toStringAsFixed(0);
+            debugPrint('📥 Download progress: $progress%');
+          }
+        },
+      );
+
+      // Verify file was saved
+      final savedFile = File(filePath);
+      if (!await savedFile.exists()) {
+        throw Exception('الملف لم يُحفظ بشكل صحيح');
+      }
+
+      final fileSize = await savedFile.length();
+      debugPrint('✅ File saved: $filePath (Size: $fileSize bytes)');
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('✅ تم التحميل بنجاح'),
+                const SizedBox(height: 4),
+                Text(
+                  fileName,
+                  style: const TextStyle(fontSize: 12),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (Platform.isAndroid && downloadDir.path.contains('Download'))
+                  const Padding(
+                    padding: EdgeInsets.only(top: 4),
+                    child: Text(
+                      'تم الحفظ في مجلد التنزيلات',
+                      style: TextStyle(fontSize: 11),
+                    ),
+                  ),
+              ],
+            ),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+
+      debugPrint('✅ File downloaded successfully: $filePath');
+    } catch (e) {
+      debugPrint('❌ Error downloading PDF: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ خطأ في تحميل الملف: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -129,7 +500,7 @@ class _WebViewScreenState extends State<WebViewScreen> {
             children: [
               // WebView - full screen
               WebViewWidget(controller: _controller),
-              
+
               // Loading Progress Bar - only show when actually loading
               if (_isLoading && _loadingProgress < 1.0)
                 Positioned(
@@ -139,11 +510,12 @@ class _WebViewScreenState extends State<WebViewScreen> {
                   child: LinearProgressIndicator(
                     value: _loadingProgress,
                     backgroundColor: Colors.grey[200],
-                    valueColor: AlwaysStoppedAnimation<Color>(Colors.blue[700]!),
+                    valueColor:
+                        AlwaysStoppedAnimation<Color>(Colors.blue[700]!),
                     minHeight: 3,
                   ),
                 ),
-              
+
               // Error Message - only show if there's a real error and page hasn't loaded
               if (_errorMessage != null && !_hasLoadedSuccessfully)
                 Center(

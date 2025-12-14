@@ -45,5 +45,9 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>نحتاج إلى الوصول إلى الصور لحفظ ملفات PDF</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>نحتاج إلى الوصول إلى الصور لحفظ ملفات PDF</string>
 </dict>
 </plist>
