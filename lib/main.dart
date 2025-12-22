@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
@@ -7,6 +8,7 @@ import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path/path.dart' as path;
+import 'package:screen_protector/screen_protector.dart';
 
 void main() {
   runApp(const MrMahmoudRabieApp());
@@ -48,6 +50,22 @@ class _WebViewScreenState extends State<WebViewScreen> {
   void initState() {
     super.initState();
     _initializeWebView();
+    _initializeScreenProtector();
+  }
+
+  /// Initialize screen protection on Android/iOS
+  Future<void> _initializeScreenProtector() async {
+    try {
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        debugPrint('🛡️ Enabling Android screen protection...');
+        await ScreenProtector.protectDataLeakageOn();
+      } else if (defaultTargetPlatform == TargetPlatform.iOS) {
+        debugPrint('🛡️ Enabling iOS screenshot prevention...');
+        await ScreenProtector.preventScreenshotOn();
+      }
+    } catch (e) {
+      debugPrint('❌ ScreenProtector init error: $e');
+    }
   }
 
   void _initializeWebView() {
@@ -485,6 +503,17 @@ class _WebViewScreenState extends State<WebViewScreen> {
         );
       }
     }
+  }
+
+  @override
+  void dispose() {
+    // Disable screen protection when leaving
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      ScreenProtector.protectDataLeakageOff();
+    } else if (defaultTargetPlatform == TargetPlatform.iOS) {
+      ScreenProtector.preventScreenshotOff();
+    }
+    super.dispose();
   }
 
   @override
