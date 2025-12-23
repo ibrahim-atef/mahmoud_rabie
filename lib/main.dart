@@ -154,6 +154,72 @@ class _WebViewScreenState extends State<WebViewScreen> {
       return true;
     }
 
+    // Always show dialog first to ask user for permission
+    final shouldRequest = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.folder, color: Colors.blue, size: 28),
+              SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'صلاحية التخزين',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+          content: const Text(
+            'يحتاج التطبيق إلى صلاحية الوصول إلى التخزين لتحميل الملفات إلى مجلد التنزيلات.\n\n'
+            'هل تريد السماح بالوصول إلى التخزين؟',
+            style: TextStyle(fontSize: 16),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop(false);
+              },
+              child: const Text(
+                'إلغاء',
+                style: TextStyle(fontSize: 16),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop(true);
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue,
+                foregroundColor: Colors.white,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              ),
+              child: const Text(
+                'موافق',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (shouldRequest != true) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تم إلغاء التحميل - الصلاحية مطلوبة'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+      return false;
+    }
+
     // Check if permission is already granted
     var storageStatus = await Permission.storage.status;
     if (storageStatus.isGranted) {
@@ -172,58 +238,67 @@ class _WebViewScreenState extends State<WebViewScreen> {
     final isPermanentlyDenied = storageStatus.isPermanentlyDenied ||
         manageStorageStatus.isPermanentlyDenied;
 
-    // Show dialog asking for permission
-    final shouldRequest = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Row(
-            children: [
-              Icon(Icons.folder, color: Colors.blue),
-              SizedBox(width: 8),
-              Text('صلاحية التخزين'),
-            ],
-          ),
-          content: Text(
-            isPermanentlyDenied
-                ? 'تم رفض صلاحية التخزين مسبقاً. يجب السماح بها من إعدادات التطبيق.\n\nهل تريد فتح الإعدادات الآن؟'
-                : 'يحتاج التطبيق إلى صلاحية الوصول إلى التخزين لتحميل الملفات.\n\nهل تريد السماح بالوصول إلى التخزين؟',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop(false);
-              },
-              child: const Text('إلغاء'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.of(context).pop(true);
-              },
-              child: Text(isPermanentlyDenied ? 'فتح الإعدادات' : 'موافق'),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (shouldRequest != true) {
-      return false;
-    }
-
-    // If permanently denied, open app settings
+    // If permanently denied, show dialog to open settings
     if (isPermanentlyDenied) {
-      final opened = await openAppSettings();
-      if (!opened) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('لا يمكن فتح الإعدادات'),
-              backgroundColor: Colors.orange,
-              duration: Duration(seconds: 2),
-            ),
-          );
+      if (mounted) {
+        final openSettings = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (BuildContext context) {
+            return AlertDialog(
+              title: const Row(
+                children: [
+                  Icon(Icons.settings, color: Colors.orange, size: 28),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'صلاحية مرفوضة',
+                      style:
+                          TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
+              content: const Text(
+                'تم رفض صلاحية التخزين مسبقاً.\n\n'
+                'يجب السماح بها من إعدادات التطبيق.\n\n'
+                'هل تريد فتح الإعدادات الآن؟',
+                style: TextStyle(fontSize: 16),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('إلغاء', style: TextStyle(fontSize: 16)),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.orange,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 24, vertical: 12),
+                  ),
+                  child: const Text(
+                    'فتح الإعدادات',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+
+        if (openSettings == true) {
+          final opened = await openAppSettings();
+          if (!opened && mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('لا يمكن فتح الإعدادات'),
+                backgroundColor: Colors.orange,
+                duration: Duration(seconds: 2),
+              ),
+            );
+          }
         }
       }
       return false;
@@ -275,20 +350,44 @@ class _WebViewScreenState extends State<WebViewScreen> {
       if (mounted) {
         final openSettings = await showDialog<bool>(
           context: context,
+          barrierDismissible: false,
           builder: (BuildContext context) {
             return AlertDialog(
-              title: const Text('صلاحية مرفوضة'),
+              title: const Row(
+                children: [
+                  Icon(Icons.settings, color: Colors.orange, size: 28),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'صلاحية مرفوضة',
+                      style:
+                          TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
               content: const Text(
-                'تم رفض الصلاحية. يجب السماح بها من إعدادات التطبيق.',
+                'تم رفض الصلاحية.\n\n'
+                'يجب السماح بها من إعدادات التطبيق.',
+                style: TextStyle(fontSize: 16),
               ),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.of(context).pop(false),
-                  child: const Text('إلغاء'),
+                  child: const Text('إلغاء', style: TextStyle(fontSize: 16)),
                 ),
                 ElevatedButton(
                   onPressed: () => Navigator.of(context).pop(true),
-                  child: const Text('فتح الإعدادات'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.orange,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 24, vertical: 12),
+                  ),
+                  child: const Text(
+                    'فتح الإعدادات',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
                 ),
               ],
             );
@@ -339,9 +438,12 @@ class _WebViewScreenState extends State<WebViewScreen> {
         );
       }
 
-      // Get download directory - always use public Downloads folder
+      // Get download directory - try public Downloads folder first, fallback to app directory
       Directory? downloadDir;
       if (Platform.isAndroid) {
+        // First, try to use public Downloads folder
+        bool canUsePublicDownloads = false;
+
         try {
           // Get external storage directory to extract root path
           final externalStorage = await getExternalStorageDirectory();
@@ -350,45 +452,55 @@ class _WebViewScreenState extends State<WebViewScreen> {
             // Example: /storage/emulated/0/Android/data/com.spring.series/files
             // Result: /storage/emulated/0
             final rootPath = externalStorage.path.split('/Android')[0];
-            downloadDir = Directory('$rootPath/Download');
-            debugPrint('📁 Using Downloads directory: ${downloadDir.path}');
+            final publicDownloads = Directory('$rootPath/Download');
+            debugPrint(
+                '📁 Trying public Downloads directory: ${publicDownloads.path}');
 
             // Ensure directory exists
-            if (!await downloadDir.exists()) {
-              await downloadDir.create(recursive: true);
+            if (!await publicDownloads.exists()) {
+              await publicDownloads.create(recursive: true);
             }
 
             // Test write access
             try {
-              final testFile = File('${downloadDir.path}/.test');
+              final testFile = File('${publicDownloads.path}/.test');
               await testFile.writeAsString('test');
               await testFile.delete();
-              debugPrint('✅ Can write to Downloads directory');
+              debugPrint('✅ Can write to public Downloads directory');
+              downloadDir = publicDownloads;
+              canUsePublicDownloads = true;
             } catch (e) {
-              debugPrint('⚠️ Cannot write to Downloads: $e');
-              // Try alternative path
-              downloadDir = Directory('/storage/emulated/0/Download');
-              if (!await downloadDir.exists()) {
-                await downloadDir.create(recursive: true);
+              debugPrint('⚠️ Cannot write to public Downloads: $e');
+              // Try alternative public path
+              try {
+                final altDownloads = Directory('/storage/emulated/0/Download');
+                if (!await altDownloads.exists()) {
+                  await altDownloads.create(recursive: true);
+                }
+                final testFile = File('${altDownloads.path}/.test');
+                await testFile.writeAsString('test');
+                await testFile.delete();
+                debugPrint('✅ Can write to alternative Downloads path');
+                downloadDir = altDownloads;
+                canUsePublicDownloads = true;
+              } catch (e2) {
+                debugPrint('⚠️ Cannot write to alternative Downloads: $e2');
               }
-              debugPrint('📁 Trying alternative path: ${downloadDir.path}');
             }
-          } else {
-            throw Exception('لا يمكن الوصول إلى التخزين الخارجي');
           }
         } catch (e) {
-          debugPrint('⚠️ Error getting Downloads directory: $e');
-          // Last resort: try direct path
-          try {
-            downloadDir = Directory('/storage/emulated/0/Download');
-            if (!await downloadDir.exists()) {
-              await downloadDir.create(recursive: true);
-            }
-            debugPrint('📁 Using direct Downloads path: ${downloadDir.path}');
-          } catch (e2) {
-            debugPrint('❌ All methods failed: $e2');
-            throw Exception('لا يمكن الوصول إلى مجلد التنزيلات');
+          debugPrint('⚠️ Error accessing public Downloads: $e');
+        }
+
+        // If can't use public Downloads, use app-specific directory
+        if (!canUsePublicDownloads) {
+          debugPrint('📁 Using app-specific directory as fallback');
+          final appDir = await getApplicationDocumentsDirectory();
+          downloadDir = Directory('${appDir.path}/Downloads');
+          if (!await downloadDir.exists()) {
+            await downloadDir.create(recursive: true);
           }
+          debugPrint('📁 Using app directory: ${downloadDir.path}');
         }
       } else if (Platform.isIOS) {
         downloadDir = await getApplicationDocumentsDirectory();
@@ -414,6 +526,10 @@ class _WebViewScreenState extends State<WebViewScreen> {
         fileName = Uri.decodeComponent(fileName);
       } catch (e) {
         debugPrint('⚠️ Could not decode filename: $e');
+      }
+
+      if (downloadDir == null) {
+        throw Exception('لا يمكن تحديد مجلد التحميل');
       }
 
       final filePath = path.join(downloadDir.path, fileName);
@@ -442,13 +558,19 @@ class _WebViewScreenState extends State<WebViewScreen> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        final isPublicDownloads = Platform.isAndroid &&
+            (downloadDir.path.contains('/Download') ||
+                downloadDir.path.contains('/storage/emulated'));
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('✅ تم التحميل بنجاح'),
+                const Text(
+                  '✅ تم التحميل بنجاح',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
                 const SizedBox(height: 4),
                 Text(
                   fileName,
@@ -456,14 +578,15 @@ class _WebViewScreenState extends State<WebViewScreen> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-                if (Platform.isAndroid && downloadDir.path.contains('Download'))
-                  const Padding(
-                    padding: EdgeInsets.only(top: 4),
-                    child: Text(
-                      'تم الحفظ في مجلد التنزيلات',
-                      style: TextStyle(fontSize: 11),
-                    ),
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    isPublicDownloads
+                        ? 'تم الحفظ في مجلد التنزيلات'
+                        : 'تم الحفظ في مجلد التطبيق',
+                    style: const TextStyle(fontSize: 11),
                   ),
+                ),
               ],
             ),
             backgroundColor: Colors.green,
